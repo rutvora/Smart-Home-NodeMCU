@@ -85,10 +85,12 @@ void handleConfig() { //Handler for the body path
     webServer->send(200, "text/plain", "Body not received");
     return;
   }
+  Serial.print(webServer->arg("plain"));
   File f = SPIFFS.open("WiFi.config", "w+");
   f.print(webServer->arg("plain"));
   f.close();
   webServer->send(200, "text/plain", "Received\n");
+  delay(5000);  //To allow the sending of data to complete
   ESP.reset();
 }
 
@@ -96,6 +98,10 @@ void handleConfig() { //Handler for the body path
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Topic: ");
   Serial.println(topic);
+  if(strcmp(topic,"/discoverRooms") == 0) {
+    localClient.publish("/discoverRooms/response", hostname.c_str());
+    return;
+  }
   Serial.print("Message: ");
   for (int i = 0; i < length; i++) {
     Serial.print(payload[i]);
@@ -103,14 +109,31 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
   Serial.println(length);
   //TODO: Set these values straight
-  if (length == 3 && payload[0] - 48 < 9) {
-    Serial.println("Inside if");
-    int pin = payload[0] - 48;
-    isPWM[pin] = payload[1] - 48 == 0 ? false : true;
-    outputPinVal[pin] = payload[2] - 48;
+  if (length == 3 && payload[0] < 9) {
+    int pin = outputPinMap[payload[0]];
+    isPWM[pin] = payload[1] == 0 ? false : true;
+    outputPinVal[pin] = payload[2];
     if (isPWM[pin]) analogWrite(pin, outputPinVal[pin]);
     else digitalWrite(pin, outputPinVal[pin]);
   }
+}
+
+//Non blocking reconnect function for MQTT
+bool reconnectMQTTBroker(PubSubClient &client, String prefix) {
+  Serial.print("Attempting MQTT connection...");
+  client.connect(MQTT_BROKER);
+  Serial.println("Connected: " + client.connected());
+  if (client.connected()) {
+    String topic = prefix + "/" + hostname;
+    client.subscribe(topic.c_str());
+    topic = prefix + "/discoverRooms";
+    client.subscribe(topic.c_str());
+  }
+  return client.connected();
+}
+
+bool reconnectMQTTBroker(PubSubClient &client) {
+  return reconnectMQTTBroker(client, "");
 }
 
 //Initialize output pins and set them all as Low
@@ -175,22 +198,6 @@ void setup() {
   }
   Serial.println("mDNS responder started");
   if (setupMode) MDNS.addService("http", "tcp", 80);    //For Service Discovery if need be
-}
-
-//Non blocking reconnect function for MQTT
-bool reconnectMQTTBroker(PubSubClient &client, String prefix) {
-  Serial.print("Attempting MQTT connection...");
-  client.connect(MQTT_BROKER);
-  Serial.println("Connected: " + client.connected());
-  if (client.connected()) {
-    String topic = prefix + "/" + hostname;
-    client.subscribe(topic.c_str());
-  }
-  return client.connected();
-}
-
-bool reconnectMQTTBroker(PubSubClient &client) {
-  return reconnectMQTTBroker(client, "");
 }
 
 unsigned long int lastConnectedWifi = 0;                        //Stores the last time when the device was connected to Wifi
